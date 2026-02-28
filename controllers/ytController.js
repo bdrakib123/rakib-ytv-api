@@ -1,5 +1,43 @@
 const ytdl = require("@distube/ytdl-core");
+const yts = require("yt-search");
 
+// 🔎 SEARCH
+exports.searchVideo = async (req, res) => {
+  try {
+    const { q } = req.query;
+
+    if (!q) {
+      return res.status(400).json({
+        status: false,
+        message: "Search query required"
+      });
+    }
+
+    const result = await yts(q);
+
+    const videos = result.videos.slice(0, 5).map(v => ({
+      title: v.title,
+      url: v.url,
+      views: v.views,
+      duration: v.timestamp,
+      thumbnail: v.thumbnail
+    }));
+
+    res.json({
+      status: true,
+      results: videos
+    });
+
+  } catch (err) {
+    console.error("SEARCH ERROR:", err.message);
+    res.status(500).json({
+      status: false,
+      message: "Search failed"
+    });
+  }
+};
+
+// 📄 VIDEO INFO
 exports.getInfo = async (req, res) => {
   try {
     const { url } = req.query;
@@ -18,7 +56,14 @@ exports.getInfo = async (req, res) => {
       });
     }
 
-    const info = await ytdl.getInfo(url);
+    const info = await ytdl.getInfo(url, {
+      requestOptions: {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+      }
+    });
 
     res.json({
       status: true,
@@ -38,6 +83,7 @@ exports.getInfo = async (req, res) => {
   }
 };
 
+// ⬇️ VIDEO DOWNLOAD
 exports.downloadVideo = async (req, res) => {
   try {
     const { url } = req.query;
@@ -72,44 +118,6 @@ exports.downloadVideo = async (req, res) => {
     res.status(500).json({
       status: false,
       message: "Download failed"
-    });
-  }
-};
-
-exports.downloadAudio = async (req, res) => {
-  try {
-    const { url } = req.query;
-
-    if (!url) {
-      return res.status(400).json({
-        status: false,
-        message: "YouTube URL required"
-      });
-    }
-
-    if (!ytdl.validateURL(url)) {
-      return res.status(400).json({
-        status: false,
-        message: "Invalid YouTube URL"
-      });
-    }
-
-    res.header("Content-Disposition", "attachment; filename=audio.mp3");
-
-    ytdl(url, { filter: "audioonly" })
-      .on("error", (err) => {
-        console.error("AUDIO ERROR:", err.message);
-        if (!res.headersSent) {
-          res.status(500).end();
-        }
-      })
-      .pipe(res);
-
-  } catch (err) {
-    console.error("AUDIO CATCH ERROR:", err.message);
-    res.status(500).json({
-      status: false,
-      message: "Audio download failed"
     });
   }
 };
