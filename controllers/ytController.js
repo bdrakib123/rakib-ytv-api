@@ -1,16 +1,23 @@
 const ytdl = require("ytdl-core");
 
 exports.getInfo = async (req, res) => {
-  const { url } = req.query;
-
-  if (!url) {
-    return res.status(400).json({
-      status: false,
-      message: "YouTube URL required"
-    });
-  }
-
   try {
+    const { url } = req.query;
+
+    if (!url) {
+      return res.status(400).json({
+        status: false,
+        message: "YouTube URL required"
+      });
+    }
+
+    if (!ytdl.validateURL(url)) {
+      return res.status(400).json({
+        status: false,
+        message: "Invalid YouTube URL"
+      });
+    }
+
     const info = await ytdl.getInfo(url);
 
     res.json({
@@ -23,34 +30,86 @@ exports.getInfo = async (req, res) => {
     });
 
   } catch (err) {
+    console.error("INFO ERROR:", err.message);
     res.status(500).json({
       status: false,
-      message: err.message
+      message: "Failed to fetch video info"
     });
   }
 };
 
-exports.downloadVideo = (req, res) => {
-  const { url } = req.query;
+exports.downloadVideo = async (req, res) => {
+  try {
+    const { url } = req.query;
 
-  if (!url) {
-    return res.status(400).json({
+    if (!url) {
+      return res.status(400).json({
+        status: false,
+        message: "YouTube URL required"
+      });
+    }
+
+    if (!ytdl.validateURL(url)) {
+      return res.status(400).json({
+        status: false,
+        message: "Invalid YouTube URL"
+      });
+    }
+
+    res.header("Content-Disposition", "attachment; filename=video.mp4");
+
+    ytdl(url, { quality: "highest" })
+      .on("error", (err) => {
+        console.error("DOWNLOAD ERROR:", err.message);
+        if (!res.headersSent) {
+          res.status(500).end();
+        }
+      })
+      .pipe(res);
+
+  } catch (err) {
+    console.error("VIDEO ERROR:", err.message);
+    res.status(500).json({
       status: false,
-      message: "YouTube URL required"
+      message: "Download failed"
     });
   }
-
-  res.header("Content-Disposition", "attachment; filename=video.mp4");
-
-  ytdl(url, { quality: "highestvideo" })
-    .pipe(res);
 };
 
-exports.downloadAudio = (req, res) => {
-  const { url } = req.query;
+exports.downloadAudio = async (req, res) => {
+  try {
+    const { url } = req.query;
 
-  res.header("Content-Disposition", "attachment; filename=audio.mp3");
+    if (!url) {
+      return res.status(400).json({
+        status: false,
+        message: "YouTube URL required"
+      });
+    }
 
-  ytdl(url, { filter: "audioonly" })
-    .pipe(res);
+    if (!ytdl.validateURL(url)) {
+      return res.status(400).json({
+        status: false,
+        message: "Invalid YouTube URL"
+      });
+    }
+
+    res.header("Content-Disposition", "attachment; filename=audio.mp3");
+
+    ytdl(url, { filter: "audioonly" })
+      .on("error", (err) => {
+        console.error("AUDIO ERROR:", err.message);
+        if (!res.headersSent) {
+          res.status(500).end();
+        }
+      })
+      .pipe(res);
+
+  } catch (err) {
+    console.error("AUDIO CATCH ERROR:", err.message);
+    res.status(500).json({
+      status: false,
+      message: "Audio download failed"
+    });
+  }
 };
