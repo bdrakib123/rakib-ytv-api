@@ -37,10 +37,11 @@ exports.searchVideo = async (req, res) => {
   }
 };
 
-// 📄 VIDEO INFO
-exports.getInfo = async (req, res) => {
+
+// 📄 BASIC INFO (lighter than getInfo)
+exports.getBasicInfo = async (req, res) => {
   try {
-    const { url } = req.query;
+    let { url } = req.query;
 
     if (!url) {
       return res.status(400).json({
@@ -56,11 +57,11 @@ exports.getInfo = async (req, res) => {
       });
     }
 
-    const info = await ytdl.getInfo(url, {
+    const info = await ytdl.getBasicInfo(url, {
       requestOptions: {
         headers: {
           "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
         }
       }
     });
@@ -83,8 +84,9 @@ exports.getInfo = async (req, res) => {
   }
 };
 
-// ⬇️ VIDEO DOWNLOAD
-exports.downloadVideo = async (req, res) => {
+
+// 🎥 FORMAT LIST (Direct CDN Links)
+exports.getFormats = async (req, res) => {
   try {
     const { url } = req.query;
 
@@ -102,22 +104,28 @@ exports.downloadVideo = async (req, res) => {
       });
     }
 
-    res.header("Content-Disposition", "attachment; filename=video.mp4");
+    const info = await ytdl.getInfo(url);
 
-    ytdl(url, { quality: "highest" })
-      .on("error", (err) => {
-        console.error("DOWNLOAD ERROR:", err.message);
-        if (!res.headersSent) {
-          res.status(500).end();
-        }
-      })
-      .pipe(res);
+    const formats = ytdl
+      .filterFormats(info.formats, "videoandaudio")
+      .filter(f => f.qualityLabel)
+      .map(f => ({
+        quality: f.qualityLabel,
+        mimeType: f.mimeType,
+        url: f.url
+      }))
+      .slice(0, 6);
+
+    res.json({
+      status: true,
+      formats
+    });
 
   } catch (err) {
-    console.error("VIDEO ERROR:", err.message);
+    console.error("FORMAT ERROR:", err.message);
     res.status(500).json({
       status: false,
-      message: "Download failed"
+      message: "Failed to fetch formats"
     });
   }
 };

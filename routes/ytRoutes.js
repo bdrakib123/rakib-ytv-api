@@ -3,13 +3,13 @@ const router = express.Router();
 const auth = require("../middleware/auth");
 const yt = require("../controllers/ytController");
 
-// 🔎 Search Videos
+// 🔎 Search
 router.get("/search", auth, yt.searchVideo);
 
-// 📄 Get Video Info
-router.get("/info", auth, yt.getInfo);
+// 📄 Basic Info
+router.get("/info", auth, yt.getBasicInfo);
 
-// ⬇️ Download Video (stream)
-router.get("/download", auth, yt.downloadVideo);
+// 🎥 Formats (CDN Links)
+router.get("/formats", auth, yt.getFormats);
 
 module.exports = router;
