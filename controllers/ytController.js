@@ -1,5 +1,6 @@
-const ytdl = require("@distube/ytdl-core");
-const yts = require("yt-search");
+const axios = require("axios");
+
+const API_KEY = process.env.YT_API_KEY;
 
 // 🔎 SEARCH
 exports.searchVideo = async (req, res) => {
@@ -13,23 +14,31 @@ exports.searchVideo = async (req, res) => {
       });
     }
 
-    const result = await yts(q);
+    const response = await axios.get(
+      "https://www.googleapis.com/youtube/v3/search",
+      {
+        params: {
+          part: "snippet",
+          q,
+          type: "video",
+          maxResults: 5,
+          key: API_KEY
+        }
+      }
+    );
 
-    const videos = result.videos.slice(0, 5).map(v => ({
-      title: v.title,
-      url: v.url,
-      views: v.views,
-      duration: v.timestamp,
-      thumbnail: v.thumbnail
+    const results = response.data.items.map(item => ({
+      title: item.snippet.title,
+      videoId: item.id.videoId,
+      url: `https://youtu.be/${item.id.videoId}`,
+      thumbnail: item.snippet.thumbnails.high.url,
+      channel: item.snippet.channelTitle
     }));
 
-    res.json({
-      status: true,
-      results: videos
-    });
+    res.json({ status: true, results });
 
   } catch (err) {
-    console.error("SEARCH ERROR:", err.message);
+    console.error("SEARCH ERROR:", err.response?.data || err.message);
     res.status(500).json({
       status: false,
       message: "Search failed"
@@ -38,94 +47,53 @@ exports.searchVideo = async (req, res) => {
 };
 
 
-// 📄 BASIC INFO (lighter than getInfo)
-exports.getBasicInfo = async (req, res) => {
+// 📄 VIDEO INFO
+exports.getInfo = async (req, res) => {
   try {
-    let { url } = req.query;
+    const { videoId } = req.query;
 
-    if (!url) {
+    if (!videoId) {
       return res.status(400).json({
         status: false,
-        message: "YouTube URL required"
+        message: "videoId required"
       });
     }
 
-    if (!ytdl.validateURL(url)) {
-      return res.status(400).json({
-        status: false,
-        message: "Invalid YouTube URL"
-      });
-    }
-
-    const info = await ytdl.getBasicInfo(url, {
-      requestOptions: {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    const response = await axios.get(
+      "https://www.googleapis.com/youtube/v3/videos",
+      {
+        params: {
+          part: "snippet,statistics,contentDetails",
+          id: videoId,
+          key: API_KEY
         }
       }
-    });
+    );
+
+    const video = response.data.items[0];
+
+    if (!video) {
+      return res.status(404).json({
+        status: false,
+        message: "Video not found"
+      });
+    }
 
     res.json({
       status: true,
-      title: info.videoDetails.title,
-      author: info.videoDetails.author.name,
-      views: info.videoDetails.viewCount,
-      length: info.videoDetails.lengthSeconds,
-      thumbnail: info.videoDetails.thumbnails.pop().url
+      title: video.snippet.title,
+      channel: video.snippet.channelTitle,
+      views: video.statistics.viewCount,
+      likes: video.statistics.likeCount,
+      duration: video.contentDetails.duration,
+      thumbnail: video.snippet.thumbnails.high.url
     });
 
   } catch (err) {
-    console.error("INFO ERROR:", err.message);
+    console.error("INFO ERROR:", err.response?.data || err.message);
     res.status(500).json({
       status: false,
       message: "Failed to fetch video info"
-    });
-  }
-};
-
-
-// 🎥 FORMAT LIST (Direct CDN Links)
-exports.getFormats = async (req, res) => {
-  try {
-    const { url } = req.query;
-
-    if (!url) {
-      return res.status(400).json({
-        status: false,
-        message: "YouTube URL required"
-      });
-    }
-
-    if (!ytdl.validateURL(url)) {
-      return res.status(400).json({
-        status: false,
-        message: "Invalid YouTube URL"
-      });
-    }
-
-    const info = await ytdl.getInfo(url);
-
-    const formats = ytdl
-      .filterFormats(info.formats, "videoandaudio")
-      .filter(f => f.qualityLabel)
-      .map(f => ({
-        quality: f.qualityLabel,
-        mimeType: f.mimeType,
-        url: f.url
-      }))
-      .slice(0, 6);
-
-    res.json({
-      status: true,
-      formats
-    });
-
-  } catch (err) {
-    console.error("FORMAT ERROR:", err.message);
-    res.status(500).json({
-      status: false,
-      message: "Failed to fetch formats"
     });
   }
 };
