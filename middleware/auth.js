@@ -1,5 +1,5 @@
 module.exports = (req, res, next) => {
-  const key = req.headers["x-api-key"];
+  const key = req.headers["x-api-key"] || req.query.apikey;
 
   if (!key || key !== process.env.API_KEY) {
     return res.status(401).json({
