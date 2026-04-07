@@ -47,6 +47,55 @@ exports.searchVideo = async (req, res) => {
 };
 
 
+// ⬇️ DOWNLOAD
+exports.downloadVideo = async (req, res) => {
+  try {
+    const { videoId } = req.query;
+
+    if (!videoId) {
+      return res.status(400).json({
+        status: false,
+        message: "videoId required"
+      });
+    }
+
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+
+    // 🔥 free downloader API (example)
+    const response = await axios.get(
+      `https://yt-api.p.rapidapi.com/dl`,
+      {
+        params: { id: videoId },
+        headers: {
+          "x-rapidapi-key": process.env.RAPID_API_KEY,
+          "x-rapidapi-host": "yt-api.p.rapidapi.com"
+        }
+      }
+    );
+
+    const data = response.data;
+
+    res.json({
+      status: true,
+      title: data.title,
+      thumbnail: data.thumbnail,
+      duration: data.length,
+      formats: data.formats?.map(f => ({
+        quality: f.quality,
+        type: f.mimeType,
+        url: f.url
+      }))
+    });
+
+  } catch (err) {
+    console.error("DOWNLOAD ERROR:", err.response?.data || err.message);
+    res.status(500).json({
+      status: false,
+      message: "Download failed"
+    });
+  }
+};
+
 // 📄 VIDEO INFO
 exports.getInfo = async (req, res) => {
   try {
