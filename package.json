@@ -17,6 +17,6 @@
   "express": "^5.2.1",
   "express-rate-limit": "^8.2.1",
   "yt-search": "^2.13.1",
-  "yt-dlp-exec": "^2.4.0"
+  "yt-dlp-exec": "^1.0.2"
 }
 }
