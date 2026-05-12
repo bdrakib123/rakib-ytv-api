@@ -3,6 +3,61 @@ const ytdlp = require("yt-dlp-exec");
 
 const API_KEY = process.env.YT_API_KEY;
 
+// ⏱ Convert ISO duration → seconds
+function parseDuration(iso) {
+  if (!iso) return 0;
+
+  const hours =
+    parseInt(
+      iso.match(/(\d+)H/)?.[1] || 0
+    );
+
+  const minutes =
+    parseInt(
+      iso.match(/(\d+)M/)?.[1] || 0
+    );
+
+  const seconds =
+    parseInt(
+      iso.match(/(\d+)S/)?.[1] || 0
+    );
+
+  return (
+    hours * 3600 +
+    minutes * 60 +
+    seconds
+  );
+}
+
+// ⏱ Seconds → mm:ss
+function formatDuration(total) {
+  if (!total || isNaN(total)) {
+    return "0:00";
+  }
+
+  const hours =
+    Math.floor(total / 3600);
+
+  const minutes =
+    Math.floor((total % 3600) / 60);
+
+  const seconds =
+    total % 60;
+
+  if (hours > 0) {
+    return (
+      `${hours}:` +
+      `${String(minutes).padStart(2, "0")}:` +
+      `${String(seconds).padStart(2, "0")}`
+    );
+  }
+
+  return (
+    `${minutes}:` +
+    `${String(seconds).padStart(2, "0")}`
+  );
+}
+
 // 🔎 SEARCH
 exports.searchVideo = async (req, res) => {
   try {
@@ -30,7 +85,7 @@ exports.searchVideo = async (req, res) => {
       }
     );
 
-    // Get all video IDs
+    // Collect video IDs
     const videoIds = response.data.items
       .map(item => item.id.videoId)
       .join(",");
@@ -47,34 +102,29 @@ exports.searchVideo = async (req, res) => {
       }
     );
 
-    // Convert ISO duration → seconds
-    const parseDuration = (iso) => {
-      const match = iso.match(/PT(?:(\d+)M)?(?:(\d+)S)?/);
-
-      const minutes = parseInt(match?.[1] || 0);
-      const seconds = parseInt(match?.[2] || 0);
-
-      return (minutes * 60) + seconds;
-    };
-
     // Duration map
     const durationMap = {};
 
     details.data.items.forEach(video => {
-      durationMap[video.id] = parseDuration(
-        video.contentDetails.duration
-      );
+      durationMap[video.id] =
+        parseDuration(
+          video.contentDetails.duration
+        );
     });
 
     // Filter results
     const results = response.data.items
       .filter(item => {
-        const title = item.snippet.title.toLowerCase();
+        const title =
+          item.snippet.title.toLowerCase();
+
+        const duration =
+          durationMap[item.id.videoId] || 0;
 
         return (
-          durationMap[item.id.videoId] <= 360 &&
+          duration <= 360 &&
 
-          // ❌ Remove movie related
+          // ❌ remove movie related
           !title.includes("movie") &&
           !title.includes("film") &&
           !title.includes("trailer") &&
@@ -86,7 +136,7 @@ exports.searchVideo = async (req, res) => {
           !title.includes("netflix") &&
           !title.includes("web series") &&
 
-          // ✅ Music related
+          // ✅ music related
           (
             title.includes("song") ||
             title.includes("music") ||
@@ -97,14 +147,28 @@ exports.searchVideo = async (req, res) => {
         );
       })
       .slice(0, 5)
-      .map(item => ({
-        title: item.snippet.title,
-        videoId: item.id.videoId,
-        url: `https://youtu.be/${item.id.videoId}`,
-        thumbnail: item.snippet.thumbnails.high.url,
-        channel: item.snippet.channelTitle,
-        duration: durationMap[item.id.videoId]
-      }));
+      .map(item => {
+        const seconds =
+          durationMap[item.id.videoId] || 0;
+
+        return {
+          title: item.snippet.title,
+          videoId: item.id.videoId,
+          url:
+            `https://youtu.be/${item.id.videoId}`,
+          thumbnail:
+            item.snippet.thumbnails.high.url,
+          channel:
+            item.snippet.channelTitle,
+
+          // seconds
+          duration: seconds,
+
+          // formatted
+          durationText:
+            formatDuration(seconds)
+        };
+      });
 
     res.json({
       status: true,
@@ -112,7 +176,10 @@ exports.searchVideo = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("SEARCH ERROR:", err.response?.data || err.message);
+    console.error(
+      "SEARCH ERROR:",
+      err.response?.data || err.message
+    );
 
     res.status(500).json({
       status: false,
@@ -120,7 +187,6 @@ exports.searchVideo = async (req, res) => {
     });
   }
 };
-
 
 // ⬇️ DOWNLOAD
 exports.downloadVideo = async (req, res) => {
@@ -134,7 +200,8 @@ exports.downloadVideo = async (req, res) => {
       });
     }
 
-    const url = `https://www.youtube.com/watch?v=${videoId}`;
+    const url =
+      `https://www.youtube.com/watch?v=${videoId}`;
 
     const info = await ytdlp(url, {
       dumpSingleJson: true,
@@ -146,18 +213,30 @@ exports.downloadVideo = async (req, res) => {
       status: true,
       title: info.title,
       thumbnail: info.thumbnail,
+
+      // seconds
       duration: info.duration,
+
+      // formatted
+      durationText:
+        formatDuration(info.duration),
+
       formats: info.formats
         .filter(f => f.ext === "mp4")
         .slice(0, 5)
         .map(f => ({
-          quality: f.format_note,
+          quality:
+            f.format_note ||
+            `${f.height || "?"}p`,
           url: f.url
         }))
     });
 
   } catch (err) {
-    console.error("DOWNLOAD ERROR:", err);
+    console.error(
+      "DOWNLOAD ERROR:",
+      err.message
+    );
 
     res.status(500).json({
       status: false,
@@ -165,7 +244,6 @@ exports.downloadVideo = async (req, res) => {
     });
   }
 };
-
 
 // 📄 VIDEO INFO
 exports.getInfo = async (req, res) => {
@@ -183,14 +261,16 @@ exports.getInfo = async (req, res) => {
       "https://www.googleapis.com/youtube/v3/videos",
       {
         params: {
-          part: "snippet,statistics,contentDetails",
+          part:
+            "snippet,statistics,contentDetails",
           id: videoId,
           key: API_KEY
         }
       }
     );
 
-    const video = response.data.items[0];
+    const video =
+      response.data.items[0];
 
     if (!video) {
       return res.status(404).json({
@@ -199,22 +279,42 @@ exports.getInfo = async (req, res) => {
       });
     }
 
+    const seconds =
+      parseDuration(
+        video.contentDetails.duration
+      );
+
     res.json({
       status: true,
       title: video.snippet.title,
-      channel: video.snippet.channelTitle,
-      views: video.statistics.viewCount,
-      likes: video.statistics.likeCount,
-      duration: video.contentDetails.duration,
-      thumbnail: video.snippet.thumbnails.high.url
+      channel:
+        video.snippet.channelTitle,
+      views:
+        video.statistics.viewCount,
+      likes:
+        video.statistics.likeCount,
+
+      // seconds
+      duration: seconds,
+
+      // formatted
+      durationText:
+        formatDuration(seconds),
+
+      thumbnail:
+        video.snippet.thumbnails.high.url
     });
 
   } catch (err) {
-    console.error("INFO ERROR:", err.response?.data || err.message);
+    console.error(
+      "INFO ERROR:",
+      err.response?.data || err.message
+    );
 
     res.status(500).json({
       status: false,
-      message: "Failed to fetch video info"
+      message:
+        "Failed to fetch video info"
     });
   }
 };
