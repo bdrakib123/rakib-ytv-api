@@ -70,15 +70,14 @@ exports.searchVideo = async (req, res) => {
       });
     }
 
-    // Search videos
+    // 🔥 FULL UNBLOCK SEARCH
     const response = await axios.get(
       "https://www.googleapis.com/youtube/v3/search",
       {
         params: {
           part: "snippet",
-          q: `${q} official song audio lyrics music`,
+          q: q, // ✅ clean query
           type: "video",
-          videoCategoryId: "10",
           maxResults: 20,
           key: API_KEY
         }
@@ -112,39 +111,13 @@ exports.searchVideo = async (req, res) => {
         );
     });
 
-    // Filter results
+    // ✅ ONLY duration filter
     const results = response.data.items
       .filter(item => {
-        const title =
-          item.snippet.title.toLowerCase();
-
         const duration =
           durationMap[item.id.videoId] || 0;
 
-        return (
-          duration <= 360 &&
-
-          // ❌ remove movie related
-          !title.includes("movie") &&
-          !title.includes("film") &&
-          !title.includes("trailer") &&
-          !title.includes("teaser") &&
-          !title.includes("episode") &&
-          !title.includes("scene") &&
-          !title.includes("serial") &&
-          !title.includes("drama") &&
-          !title.includes("netflix") &&
-          !title.includes("web series") &&
-
-          // ✅ music related
-          (
-            title.includes("song") ||
-            title.includes("music") ||
-            title.includes("audio") ||
-            title.includes("lyrics") ||
-            title.includes("official")
-          )
-        );
+        return duration <= 360; // 6 min limit
       })
       .slice(0, 5)
       .map(item => {
@@ -161,10 +134,7 @@ exports.searchVideo = async (req, res) => {
           channel:
             item.snippet.channelTitle,
 
-          // seconds
           duration: seconds,
-
-          // formatted
           durationText:
             formatDuration(seconds)
         };
@@ -187,7 +157,8 @@ exports.searchVideo = async (req, res) => {
     });
   }
 };
-
+    
+   
 // ⬇️ DOWNLOAD
 exports.downloadVideo = async (req, res) => {
   try {
@@ -203,39 +174,78 @@ exports.downloadVideo = async (req, res) => {
     const url =
       `https://www.youtube.com/watch?v=${videoId}`;
 
+    // 🔥 yt-dlp with cookies
     const info = await ytdlp(url, {
       dumpSingleJson: true,
       noWarnings: true,
-      preferFreeFormats: true
+      preferFreeFormats: true,
+
+      // 🍪 cookies file
+      cookies: "./cookie.txt",
+
+      // better bypass
+      addHeader: [
+        "referer:youtube.com",
+        "user-agent:Mozilla/5.0"
+      ]
     });
+
+    // 🎥 VIDEO FORMATS
+    const videoFormats = info.formats
+      .filter(f =>
+        f.ext === "mp4" &&
+        f.vcodec !== "none"
+      )
+      .slice(0, 5)
+      .map(f => ({
+        quality:
+          f.format_note ||
+          `${f.height || "?"}p`,
+        filesize:
+          f.filesize || null,
+        url: f.url
+      }));
+
+    // 🎵 AUDIO FORMATS
+    const audioFormats = info.formats
+      .filter(f =>
+        (
+          f.ext === "m4a" ||
+          f.ext === "mp3" ||
+          f.ext === "webm"
+        ) &&
+        f.acodec !== "none"
+      )
+      .slice(0, 5)
+      .map(f => ({
+        bitrate:
+          f.abr
+            ? `${f.abr}kbps`
+            : "audio",
+        ext: f.ext,
+        filesize:
+          f.filesize || null,
+        url: f.url
+      }));
 
     res.json({
       status: true,
+
       title: info.title,
       thumbnail: info.thumbnail,
 
-      // seconds
       duration: info.duration,
-
-      // formatted
       durationText:
         formatDuration(info.duration),
 
-      formats: info.formats
-        .filter(f => f.ext === "mp4")
-        .slice(0, 5)
-        .map(f => ({
-          quality:
-            f.format_note ||
-            `${f.height || "?"}p`,
-          url: f.url
-        }))
+      video: videoFormats,
+      audio: audioFormats
     });
 
   } catch (err) {
     console.error(
       "DOWNLOAD ERROR:",
-      err.message
+      err.stderr || err.message
     );
 
     res.status(500).json({
