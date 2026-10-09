@@ -1,61 +1,31 @@
 const axios = require("axios");
-const ytdlp = require("yt-dlp-exec");
 
 const API_KEY = process.env.YT_API_KEY;
 
-// ⏱ Convert ISO duration → seconds
+// ISO 8601 duration → seconds
 function parseDuration(iso) {
   if (!iso) return 0;
 
-  const hours =
-    parseInt(
-      iso.match(/(\d+)H/)?.[1] || 0
-    );
+  const hours = parseInt(iso.match(/(\d+)H/)?.[1] || 0);
+  const minutes = parseInt(iso.match(/(\d+)M/)?.[1] || 0);
+  const seconds = parseInt(iso.match(/(\d+)S/)?.[1] || 0);
 
-  const minutes =
-    parseInt(
-      iso.match(/(\d+)M/)?.[1] || 0
-    );
-
-  const seconds =
-    parseInt(
-      iso.match(/(\d+)S/)?.[1] || 0
-    );
-
-  return (
-    hours * 3600 +
-    minutes * 60 +
-    seconds
-  );
+  return hours * 3600 + minutes * 60 + seconds;
 }
 
-// ⏱ Seconds → mm:ss
+// Seconds → mm:ss / hh:mm:ss
 function formatDuration(total) {
-  if (!total || isNaN(total)) {
-    return "0:00";
-  }
+  if (!total || isNaN(total)) return "0:00";
 
-  const hours =
-    Math.floor(total / 3600);
-
-  const minutes =
-    Math.floor((total % 3600) / 60);
-
-  const seconds =
-    total % 60;
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
 
   if (hours > 0) {
-    return (
-      `${hours}:` +
-      `${String(minutes).padStart(2, "0")}:` +
-      `${String(seconds).padStart(2, "0")}`
-    );
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }
 
-  return (
-    `${minutes}:` +
-    `${String(seconds).padStart(2, "0")}`
-  );
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 // 🔎 SEARCH
@@ -63,20 +33,26 @@ exports.searchVideo = async (req, res) => {
   try {
     const { q } = req.query;
 
-    if (!q) {
+    if (!q || !q.trim()) {
       return res.status(400).json({
         status: false,
         message: "Search query required"
       });
     }
 
-    // 🔥 FULL UNBLOCK SEARCH
+    if (!API_KEY) {
+      return res.status(500).json({
+        status: false,
+        message: "YT_API_KEY is not configured"
+      });
+    }
+
     const response = await axios.get(
       "https://www.googleapis.com/youtube/v3/search",
       {
         params: {
           part: "snippet",
-          q: q, // ✅ clean query
+          q: q.trim(),
           type: "video",
           maxResults: 20,
           key: API_KEY
@@ -84,12 +60,20 @@ exports.searchVideo = async (req, res) => {
       }
     );
 
-    // Collect video IDs
-    const videoIds = response.data.items
-      .map(item => item.id.videoId)
+    const items = response.data.items || [];
+
+    const videoIds = items
+      .map(item => item.id?.videoId)
+      .filter(Boolean)
       .join(",");
 
-    // Fetch durations
+    if (!videoIds) {
+      return res.json({
+        status: true,
+        results: []
+      });
+    }
+
     const details = await axios.get(
       "https://www.googleapis.com/youtube/v3/videos",
       {
@@ -101,46 +85,41 @@ exports.searchVideo = async (req, res) => {
       }
     );
 
-    // Duration map
     const durationMap = {};
 
-    details.data.items.forEach(video => {
-      durationMap[video.id] =
-        parseDuration(
-          video.contentDetails.duration
-        );
-    });
+    for (const video of details.data.items || []) {
+      durationMap[video.id] = parseDuration(
+        video.contentDetails?.duration
+      );
+    }
 
-    // ✅ ONLY duration filter
-    const results = response.data.items
+    const results = items
       .filter(item => {
-        const duration =
-          durationMap[item.id.videoId] || 0;
+        const videoId = item.id?.videoId;
+        const duration = durationMap[videoId] || 0;
 
-        return duration <= 360; // 6 min limit
+        return videoId && duration <= 360;
       })
       .slice(0, 5)
       .map(item => {
-        const seconds =
-          durationMap[item.id.videoId] || 0;
+        const videoId = item.id.videoId;
+        const seconds = durationMap[videoId] || 0;
 
         return {
           title: item.snippet.title,
-          videoId: item.id.videoId,
-          url:
-            `https://youtu.be/${item.id.videoId}`,
+          videoId,
+          url: `https://youtu.be/${videoId}`,
           thumbnail:
-            item.snippet.thumbnails.high.url,
-          channel:
-            item.snippet.channelTitle,
-
+            item.snippet.thumbnails?.high?.url ||
+            item.snippet.thumbnails?.default?.url ||
+            null,
+          channel: item.snippet.channelTitle,
           duration: seconds,
-          durationText:
-            formatDuration(seconds)
+          durationText: formatDuration(seconds)
         };
       });
 
-    res.json({
+    return res.json({
       status: true,
       results
     });
@@ -151,106 +130,13 @@ exports.searchVideo = async (req, res) => {
       err.response?.data || err.message
     );
 
-    res.status(500).json({
+    return res.status(
+      err.response?.status === 403 ? 403 : 500
+    ).json({
       status: false,
-      message: "Search failed"
-    });
-  }
-};
-    
-   
-// ⬇️ DOWNLOAD
-exports.downloadVideo = async (req, res) => {
-  try {
-    const { videoId } = req.query;
-
-    if (!videoId) {
-      return res.status(400).json({
-        status: false,
-        message: "videoId required"
-      });
-    }
-
-    const url =
-      `https://www.youtube.com/watch?v=${videoId}`;
-
-    // 🔥 yt-dlp with cookies
-    const info = await ytdlp(url, {
-      dumpSingleJson: true,
-      noWarnings: true,
-      preferFreeFormats: true,
-
-      // 🍪 cookies file
-      cookies: "./cookie.txt",
-
-      // better bypass
-      addHeader: [
-        "referer:youtube.com",
-        "user-agent:Mozilla/5.0"
-      ]
-    });
-
-    // 🎥 VIDEO FORMATS
-    const videoFormats = info.formats
-      .filter(f =>
-        f.ext === "mp4" &&
-        f.vcodec !== "none"
-      )
-      .slice(0, 5)
-      .map(f => ({
-        quality:
-          f.format_note ||
-          `${f.height || "?"}p`,
-        filesize:
-          f.filesize || null,
-        url: f.url
-      }));
-
-    // 🎵 AUDIO FORMATS
-    const audioFormats = info.formats
-      .filter(f =>
-        (
-          f.ext === "m4a" ||
-          f.ext === "mp3" ||
-          f.ext === "webm"
-        ) &&
-        f.acodec !== "none"
-      )
-      .slice(0, 5)
-      .map(f => ({
-        bitrate:
-          f.abr
-            ? `${f.abr}kbps`
-            : "audio",
-        ext: f.ext,
-        filesize:
-          f.filesize || null,
-        url: f.url
-      }));
-
-    res.json({
-      status: true,
-
-      title: info.title,
-      thumbnail: info.thumbnail,
-
-      duration: info.duration,
-      durationText:
-        formatDuration(info.duration),
-
-      video: videoFormats,
-      audio: audioFormats
-    });
-
-  } catch (err) {
-    console.error(
-      "DOWNLOAD ERROR:",
-      err.stderr || err.message
-    );
-
-    res.status(500).json({
-      status: false,
-      message: "Download failed"
+      message:
+        err.response?.data?.error?.message ||
+        "Search failed"
     });
   }
 };
@@ -260,10 +146,17 @@ exports.getInfo = async (req, res) => {
   try {
     const { videoId } = req.query;
 
-    if (!videoId) {
+    if (!videoId || !videoId.trim()) {
       return res.status(400).json({
         status: false,
         message: "videoId required"
+      });
+    }
+
+    if (!API_KEY) {
+      return res.status(500).json({
+        status: false,
+        message: "YT_API_KEY is not configured"
       });
     }
 
@@ -271,16 +164,14 @@ exports.getInfo = async (req, res) => {
       "https://www.googleapis.com/youtube/v3/videos",
       {
         params: {
-          part:
-            "snippet,statistics,contentDetails",
-          id: videoId,
+          part: "snippet,statistics,contentDetails",
+          id: videoId.trim(),
           key: API_KEY
         }
       }
     );
 
-    const video =
-      response.data.items[0];
+    const video = response.data.items?.[0];
 
     if (!video) {
       return res.status(404).json({
@@ -289,30 +180,22 @@ exports.getInfo = async (req, res) => {
       });
     }
 
-    const seconds =
-      parseDuration(
-        video.contentDetails.duration
-      );
+    const seconds = parseDuration(
+      video.contentDetails?.duration
+    );
 
-    res.json({
+    return res.json({
       status: true,
-      title: video.snippet.title,
-      channel:
-        video.snippet.channelTitle,
-      views:
-        video.statistics.viewCount,
-      likes:
-        video.statistics.likeCount,
-
-      // seconds
+      title: video.snippet?.title || "",
+      channel: video.snippet?.channelTitle || "",
+      views: video.statistics?.viewCount || "0",
+      likes: video.statistics?.likeCount || "0",
       duration: seconds,
-
-      // formatted
-      durationText:
-        formatDuration(seconds),
-
+      durationText: formatDuration(seconds),
       thumbnail:
-        video.snippet.thumbnails.high.url
+        video.snippet?.thumbnails?.high?.url ||
+        video.snippet?.thumbnails?.default?.url ||
+        null
     });
 
   } catch (err) {
@@ -321,9 +204,12 @@ exports.getInfo = async (req, res) => {
       err.response?.data || err.message
     );
 
-    res.status(500).json({
+    return res.status(
+      err.response?.status === 403 ? 403 : 500
+    ).json({
       status: false,
       message:
+        err.response?.data?.error?.message ||
         "Failed to fetch video info"
     });
   }
